@@ -27,7 +27,9 @@ export const template = `
                 <button *ngIf="managing" type="button" class="btn btn-sm btn-outline-secondary"
                         [disabled]="busy" (click)="close()">Done</button>
             </header>
-            <p *ngIf="managing && !editor" class="move-hint">Drag a command onto a group heading to move it.</p>
+            <p *ngIf="managing && !editor" class="move-hint" aria-live="polite">
+                {{ busy ? 'Saving shortcuts…' : 'Drag between commands to reorder, or onto a group to move.' }}
+            </p>
 
             <form *ngIf="editor as draft" class="editor" (submit)="$event.preventDefault(); save()">
                 <ng-container *ngIf="!draft.deleting; else deletePrompt">
@@ -66,12 +68,12 @@ export const template = `
             <p class="error text-danger" *ngIf="error" role="alert">{{ error }}</p>
 
             <div class="scope-list">
-                <section class="scope" *ngFor="let scope of scopes">
+                <section class="scope" *ngFor="let scope of scopes; trackBy: trackScope">
                     <div class="row-heading"
                          [class.drop-ready]="dragged && dragged.entries !== scope.entries"
-                         [class.drop-active]="dropTarget === scope.entries"
-                         (dragover)="overGroup($event, scope.entries)"
-                         (dragleave)="leaveGroup($event, scope.entries)"
+                         [class.drop-active]="dropTarget?.entries === scope.entries && dropTarget?.rowIndex === undefined"
+                         (dragover)="dragOver($event, scope.entries)"
+                         (dragleave)="dragLeave($event, scope.entries)"
                          (drop)="dropCommand($event, scope, [], scope.entries)">
                         <strong class="scope-title">{{ scope.title }}</strong>
                         <span class="scope-tag" *ngIf="scope.profileId !== null">Current profile</span>
@@ -97,18 +99,21 @@ export const template = `
     </div>
     <p *ngIf="!entries.length && !managing" class="empty">No commands yet</p>
     <div class="entries" [class.managing]="managing">
-        <div *ngFor="let entry of entries; let index = index" class="entry" [class.is-group]="entry.kind === 'group'">
+        <div *ngFor="let entry of entries; let index = index; trackBy: trackEntry"
+             class="entry" [class.is-group]="entry.kind === 'group'">
             <ng-container *ngIf="entry.kind === 'group'; else command">
                 <details open>
                     <summary [class.drop-ready]="dragged && dragged.entries !== entry.entries"
-                             [class.drop-active]="dropTarget === entry.entries"
-                             (dragover)="overGroup($event, entry.entries)"
-                             (dragleave)="leaveGroup($event, entry.entries)"
-                             (drop)="dropCommand($event, scope, path.concat(index), entry.entries)">{{ entry.title }}</summary>
-                    <div class="nested">
-                        <div class="actions group-actions" *ngIf="managing">
+                             [class.drop-active]="dropTarget?.entries === entry.entries && dropTarget?.rowIndex === undefined"
+                             (dragover)="dragOver($event, entry.entries)"
+                             (dragleave)="dragLeave($event, entry.entries)"
+                             (drop)="dropCommand($event, scope, path.concat(index), entry.entries)">
+                        <span class="group-title">{{ entry.title }}</span>
+                        <span class="actions group-controls" *ngIf="managing">
                             <ng-container *ngTemplateOutlet="editActions"></ng-container>
-                        </div>
+                        </span>
+                    </summary>
+                    <div class="nested">
                         <ng-container *ngTemplateOutlet="entryList; context: {
                             $implicit: entry.entries, scope: scope, path: path.concat(index)
                         }"></ng-container>
@@ -116,10 +121,15 @@ export const template = `
                 </details>
             </ng-container>
             <ng-template #command>
-                <div class="command-row">
+                <div class="command-row"
+                     [class.drop-before]="dropTarget?.entries === entries && dropTarget?.rowIndex === index && !dropTarget?.after"
+                     [class.drop-after]="dropTarget?.entries === entries && dropTarget?.rowIndex === index && dropTarget?.after"
+                     (dragover)="dragOver($event, entries, index)"
+                     (dragleave)="dragLeave($event, entries, index)"
+                     (drop)="dropCommand($event, scope, path, entries, index)">
                     <span class="command-drag" *ngIf="managing" [attr.draggable]="!editor && !busy"
                           (dragstart)="startCommandDrag($event, scope, path, entries, index)"
-                          (dragend)="endCommandDrag()" title="Drag to another group">
+                          (dragend)="endCommandDrag()" title="Drag to reorder or move">
                         <span aria-hidden="true" class="grip">⠿</span>
                         <span class="command-alias">{{ entry.title }}</span>
                     </span>
@@ -212,18 +222,23 @@ export const styles = `
 .panel-position.anchor-right .panel-header { padding: 6px 58px 6px 12px; }
 .editor { border-bottom: 1px solid var(--bs-border-color, #555); }
 .move-hint { margin: 7px 12px 0; font-size: .85em; opacity: .8; }
-.scope-list { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 4px 12px 10px; }
+.scope-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px 10px; }
 .scope { padding: 8px 0; }
 .scope + .scope { border-top: 1px solid var(--bs-border-color, #555); }
 .row-heading { margin-bottom: 5px; }
-.scope-title, summary, .command-alias { overflow-wrap: anywhere; }
+.scope-title, .group-title, .command-alias { overflow-wrap: anywhere; }
 .scope-tag { flex: none; opacity: .72; font-size: .8em; }
 .empty { margin: 3px 0; opacity: .75; font-size: .9em; }
 .profile-hint { padding-bottom: 4px; }
 .entries { display: flex; flex-wrap: wrap; gap: 5px; }
 .entry { min-width: 0; max-width: 100%; }
 .entry.is-group, .entries.managing > .entry { flex: 0 0 100%; }
-summary { cursor: pointer; padding: 4px; }
+summary { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: '▸'; flex: none; }
+details[open] > summary::before { transform: rotate(90deg); }
+.group-title { flex: 1; min-width: 0; }
+.actions.group-controls { flex: none; flex-wrap: nowrap; }
 .row-heading { padding: 3px 4px; }
 .drop-ready { outline: 1px dashed var(--bs-primary, #9689eb); border-radius: 4px; }
 .drop-active { background: var(--bs-primary-bg-subtle, #80808040); outline-style: solid; }
@@ -232,7 +247,18 @@ summary { cursor: pointer; padding: 4px; }
     margin-left: 5px;
     padding-left: 9px;
 }
-.command-row { justify-content: space-between; min-height: 30px; }
+.command-row { position: relative; justify-content: space-between; min-height: 30px; }
+.command-row.drop-before::before,
+.command-row.drop-after::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    height: 2px;
+    background: var(--bs-primary, #9689eb);
+    pointer-events: none;
+}
+.command-row.drop-before::before { top: -3px; }
+.command-row.drop-after::after { bottom: -3px; }
 .command-drag { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .command-drag[draggable="true"] { cursor: grab; user-select: none; }
 .grip { opacity: .68; }

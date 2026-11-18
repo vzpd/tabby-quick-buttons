@@ -51,6 +51,13 @@ interface DraggedCommand {
     index: number
 }
 
+interface DropPosition {
+    entries: Entry[]
+    rowIndex?: number
+    after: boolean
+    insertAt: number
+}
+
 interface Position {
     x: number
     y: number
@@ -82,7 +89,7 @@ export class QuickButtonsComponent implements OnDestroy {
     busy = false
     error = ''
     dragged: DraggedCommand | null = null
-    dropTarget: Entry[] | null = null
+    dropTarget: DropPosition | null = null
     movingBall = false
     private pinned = false
     private ballPosition = this.loadBallPosition()
@@ -90,6 +97,9 @@ export class QuickButtonsComponent implements OnDestroy {
     private suppressBallClick = false
     private viewport = { width: window.innerWidth, height: window.innerHeight }
     private panelContext?: Subscription
+    private readonly groupKeys = new WeakMap<Group, symbol>()
+    readonly trackEntry = (_index: number, entry: Entry): Command | symbol =>
+        entry.kind === 'group' ? this.groupKey(entry) : entry
 
     constructor (
         @Inject(AppService) private readonly app: AppService,
@@ -118,7 +128,7 @@ export class QuickButtonsComponent implements OnDestroy {
         const below = y + ballSize / 2 < height / 2
         const anchorRight = x + ballSize / 2 >= width / 2
         const panelWidth = Math.min(380, anchorRight ? x + ballSize - edge : width - x - edge)
-        const panelHeight = Math.min(570, (below ? height - y : y + ballSize) - edge)
+        const panelHeight = (below ? height - y : y + ballSize) - edge
         return { x, y, panelWidth, panelHeight, panelOffset: anchorRight ? ballSize - panelWidth : 0, below, anchorRight }
     }
 
@@ -318,20 +328,39 @@ export class QuickButtonsComponent implements OnDestroy {
         event.dataTransfer.setData(commandDragType, 'command')
     }
 
-    overGroup (event: DragEvent, entries: Entry[]): void {
-        if (!this.dragged || this.dragged.entries === entries || !event.dataTransfer) {
+    dragOver (event: DragEvent, entries: Entry[], rowIndex?: number): void {
+        const position = this.dropPosition(event, entries, rowIndex)
+        this.dropTarget = position ?? null
+        if (!position || !event.dataTransfer) {
             return
         }
         event.preventDefault()
         event.dataTransfer.dropEffect = 'move'
-        this.dropTarget = entries
     }
 
-    leaveGroup (event: DragEvent, entries: Entry[]): void {
+    dragLeave (event: DragEvent, entries: Entry[], rowIndex?: number): void {
         const target = event.currentTarget as HTMLElement
-        if (this.dropTarget === entries && !target.contains(event.relatedTarget as Node | null)) {
+        if (this.dropTarget?.entries === entries && this.dropTarget.rowIndex === rowIndex &&
+            !target.contains(event.relatedTarget as Node | null)) {
             this.dropTarget = null
         }
+    }
+
+    private dropPosition (event: DragEvent, entries: Entry[], rowIndex?: number): DropPosition | undefined {
+        const drag = this.dragged
+        if (!drag) {
+            return
+        }
+        let after = false
+        if (rowIndex !== undefined) {
+            const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
+            after = event.clientY >= row.top + row.height / 2
+        }
+        const insertAt = rowIndex === undefined ? entries.length : rowIndex + Number(after)
+        if (drag.entries === entries && (rowIndex === undefined || insertAt === drag.index || insertAt === drag.index + 1)) {
+            return
+        }
+        return { entries, rowIndex, after, insertAt }
     }
 
     endCommandDrag (): void {
@@ -339,9 +368,10 @@ export class QuickButtonsComponent implements OnDestroy {
         this.dropTarget = null
     }
 
-    async dropCommand (event: DragEvent, scope: VisibleScope, path: number[], entries: Entry[]): Promise<void> {
+    async dropCommand (event: DragEvent, scope: VisibleScope, path: number[], entries: Entry[], rowIndex?: number): Promise<void> {
         const drag = this.dragged
-        if (!drag || drag.entries === entries || event.dataTransfer?.getData(commandDragType) !== 'command') {
+        const position = this.dropPosition(event, entries, rowIndex)
+        if (!drag || !position || event.dataTransfer?.getData(commandDragType) !== 'command') {
             return
         }
         event.preventDefault()
@@ -358,8 +388,9 @@ export class QuickButtonsComponent implements OnDestroy {
             this.error = 'The command or group is missing. Start the move again.'
             return
         }
+        const insertAt = position.insertAt - Number(from === to && drag.index < position.insertAt)
         from.splice(drag.index, 1)
-        to.push(command)
+        to.splice(insertAt, 0, command)
         const changes = destination === source
             ? new Map([[scope, source]])
             : new Map([[drag.scope, source], [scope, destination]])
@@ -389,11 +420,16 @@ export class QuickButtonsComponent implements OnDestroy {
         if (deleting && index !== undefined) {
             entries.splice(index, 1)
         } else {
-            const savedEntry = { ...structuredClone(entry), title: entry.title.trim() }
+            const title = entry.title.trim()
             if (index === undefined) {
-                entries.push(savedEntry)
+                entries.push({ ...entry, title })
             } else {
-                entries[index] = savedEntry
+                const existing = entries[index]
+                if (existing.kind === 'group') {
+                    existing.title = title
+                } else {
+                    entries[index] = { ...entry, title }
+                }
             }
         }
 
@@ -401,7 +437,27 @@ export class QuickButtonsComponent implements OnDestroy {
     }
 
     private copyScope (scope: VisibleScope): Scope {
-        return { profileId: scope.profileId, entries: structuredClone(scope.entries) }
+        return { profileId: scope.profileId, entries: this.copyEntries(scope.entries) }
+    }
+
+    private copyEntries (entries: Entry[]): Entry[] {
+        return entries.map(entry => {
+            if (entry.kind === 'command') {
+                return entry
+            }
+            const group = { ...entry, entries: this.copyEntries(entry.entries) }
+            this.groupKeys.set(group, this.groupKey(entry))
+            return group
+        })
+    }
+
+    private groupKey (group: Group): symbol {
+        let key = this.groupKeys.get(group)
+        if (!key) {
+            key = Symbol()
+            this.groupKeys.set(group, key)
+        }
+        return key
     }
 
     private entriesAt (entries: Entry[], path: number[]): Entry[] | undefined {
@@ -459,5 +515,9 @@ export class QuickButtonsComponent implements OnDestroy {
             const saved = this.settings.scopes.find(item => item.profileId === scope.profileId)
             return { ...scope, saved, entries: saved?.entries ?? [] }
         })
+    }
+
+    trackScope (_index: number, scope: VisibleScope): string | null {
+        return scope.profileId
     }
 }

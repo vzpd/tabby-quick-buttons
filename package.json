@@ -1,9 +1,17 @@
 {
   "name": "tabby-quick-buttons",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Floating command shortcuts with shared and per-profile groups for Tabby.",
   "author": "zp",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vzpd/tabby-quick-buttons.git"
+  },
+  "homepage": "https://github.com/vzpd/tabby-quick-buttons#readme",
+  "bugs": {
+    "url": "https://github.com/vzpd/tabby-quick-buttons/issues"
+  },
   "keywords": [
     "tabby-plugin"
   ],

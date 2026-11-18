@@ -1,6 +1,6 @@
-import { Component, Inject, OnDestroy } from '@angular/core'
+import { Component, HostListener, Inject, OnDestroy } from '@angular/core'
 import { Subscription } from 'rxjs'
-import { AppService, ConfigService, SplitTabComponent } from 'tabby-core'
+import { AppService, ConfigService, NotificationsService, SplitTabComponent } from 'tabby-core'
 import { BaseTerminalProfile, BaseTerminalTabComponent } from 'tabby-terminal'
 import { styles, template } from './quickButtons.view'
 
@@ -44,7 +44,30 @@ interface Editor {
     deleting: boolean
 }
 
+interface DraggedCommand {
+    scope: VisibleScope
+    parentPath: number[]
+    entries: Entry[]
+    index: number
+}
+
+interface Position {
+    x: number
+    y: number
+}
+
+interface BallDrag {
+    pointerId: number
+    pointer: Position
+    origin: Position
+    listeners: AbortController
+}
+
 const invalidCommandCharacters = /[\x00-\x1f\x7f-\x9f]/
+const ballSize = 52
+const edge = 8
+const positionKey = 'tabby-quick-buttons.floating-position'
+const commandDragType = 'application/x-tabby-quick-button'
 
 @Component({
     selector: 'tabby-quick-buttons',
@@ -58,11 +81,20 @@ export class QuickButtonsComponent implements OnDestroy {
     editor: Editor | null = null
     busy = false
     error = ''
+    dragged: DraggedCommand | null = null
+    dropTarget: Entry[] | null = null
+    movingBall = false
+    private pinned = false
+    private ballPosition = this.loadBallPosition()
+    private ballDrag: BallDrag | null = null
+    private suppressBallClick = false
+    private viewport = { width: window.innerWidth, height: window.innerHeight }
     private panelContext?: Subscription
 
     constructor (
         @Inject(AppService) private readonly app: AppService,
         @Inject(ConfigService) private readonly config: ConfigService,
+        @Inject(NotificationsService) private readonly notifications: NotificationsService,
     ) {}
 
     get activeTerminal (): Terminal | null {
@@ -79,9 +111,121 @@ export class QuickButtonsComponent implements OnDestroy {
         return this.config.store.quickButtons
     }
 
+    get layout () {
+        const { width, height } = this.viewport
+        const x = this.clamp(this.ballPosition?.x ?? width - ballSize - 24, width - ballSize - edge)
+        const y = this.clamp(this.ballPosition?.y ?? height - ballSize - 16, height - ballSize - edge)
+        const below = y + ballSize / 2 < height / 2
+        const anchorRight = x + ballSize / 2 >= width / 2
+        const panelWidth = Math.min(380, anchorRight ? x + ballSize - edge : width - x - edge)
+        const panelHeight = Math.min(570, (below ? height - y : y + ballSize) - edge)
+        return { x, y, panelWidth, panelHeight, panelOffset: anchorRight ? ballSize - panelWidth : 0, below, anchorRight }
+    }
+
+    @HostListener('window:resize')
+    updateViewport (): void {
+        this.viewport = { width: window.innerWidth, height: window.innerHeight }
+    }
+
+    private clamp (value: number, limit: number): number {
+        return Math.max(edge, Math.min(value, limit))
+    }
+
+    private loadBallPosition (): Position | null {
+        try {
+            const position = JSON.parse(window.localStorage.getItem(positionKey) ?? 'null')
+            return Number.isFinite(position?.x) && Number.isFinite(position?.y) ? position : null
+        } catch {
+            return null
+        }
+    }
+
+    startBallDrag (event: PointerEvent): void {
+        if (event.button !== 0 || !event.isPrimary) {
+            return
+        }
+        this.suppressBallClick = false
+        const { x, y } = this.layout
+        const listeners = new AbortController()
+        this.ballDrag = {
+            pointerId: event.pointerId,
+            pointer: { x: event.clientX, y: event.clientY },
+            origin: { x, y },
+            listeners,
+        }
+        const { signal } = listeners
+        window.addEventListener('pointermove', move => this.moveBall(move), { signal })
+        window.addEventListener('pointerup', up => this.finishBallDrag(up), { signal })
+        window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), { signal })
+        const button = event.currentTarget as HTMLButtonElement
+        button.setPointerCapture(event.pointerId)
+    }
+
+    private moveBall (event: PointerEvent): void {
+        const drag = this.ballDrag
+        if (!drag || drag.pointerId !== event.pointerId) {
+            return
+        }
+        const dx = event.clientX - drag.pointer.x
+        const dy = event.clientY - drag.pointer.y
+        if (!this.movingBall && Math.hypot(dx, dy) < 5) {
+            return
+        }
+        this.movingBall = true
+        this.ballPosition = {
+            x: this.clamp(drag.origin.x + dx, this.viewport.width - ballSize - edge),
+            y: this.clamp(drag.origin.y + dy, this.viewport.height - ballSize - edge),
+        }
+    }
+
+    finishBallDrag (event: PointerEvent): void {
+        if (this.ballDrag?.pointerId !== event.pointerId) {
+            return
+        }
+        this.ballDrag.listeners.abort()
+        this.ballDrag = null
+        if (!this.movingBall) {
+            return
+        }
+        this.movingBall = false
+        this.suppressBallClick = true
+        if (!this.pinned && !this.managing) {
+            this.close()
+        }
+        try {
+            window.localStorage.setItem(positionKey, JSON.stringify(this.ballPosition))
+        } catch {
+            this.notifications.info('Quick Buttons moved. This window could not save its position.')
+        }
+    }
+
+    clickBall (event: MouseEvent): void {
+        if (event.detail && this.suppressBallClick) {
+            this.suppressBallClick = false
+            return
+        }
+        this.togglePinned()
+    }
+
+    togglePinned (): void {
+        if (!this.activeTerminal) {
+            this.notifications.info('Open a terminal to use Quick Buttons.')
+            return
+        }
+        if (this.busy) {
+            return
+        }
+        if (this.pinned || this.managing) {
+            this.close()
+            return
+        }
+        this.open()
+        this.pinned = true
+    }
+
     open (): void {
         const terminal = this.activeTerminal
-        if (!terminal || this.expanded || this.busy) {
+        if (!terminal || this.expanded || this.busy || this.movingBall) {
             return
         }
         this.target = terminal
@@ -106,16 +250,21 @@ export class QuickButtonsComponent implements OnDestroy {
         this.panelContext?.unsubscribe()
         this.target = null
         this.managing = false
+        this.pinned = false
         this.editor = null
         this.error = ''
+        this.endCommandDrag()
+        this.ballDrag?.listeners.abort()
+        this.ballDrag = null
+        this.movingBall = false
     }
 
     ngOnDestroy (): void {
-        this.panelContext?.unsubscribe()
+        this.close()
     }
 
     leave (): void {
-        if (!this.managing) {
+        if (!this.managing && !this.pinned && !this.ballDrag) {
             this.close()
         }
     }
@@ -158,6 +307,65 @@ export class QuickButtonsComponent implements OnDestroy {
         this.error = ''
     }
 
+    startCommandDrag (event: DragEvent, scope: VisibleScope, parentPath: number[], entries: Entry[], index: number): void {
+        if (!this.managing || this.editor || this.busy || !event.dataTransfer) {
+            event.preventDefault()
+            return
+        }
+        this.error = ''
+        this.dragged = { scope, parentPath, entries, index }
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData(commandDragType, 'command')
+    }
+
+    overGroup (event: DragEvent, entries: Entry[]): void {
+        if (!this.dragged || this.dragged.entries === entries || !event.dataTransfer) {
+            return
+        }
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        this.dropTarget = entries
+    }
+
+    leaveGroup (event: DragEvent, entries: Entry[]): void {
+        const target = event.currentTarget as HTMLElement
+        if (this.dropTarget === entries && !target.contains(event.relatedTarget as Node | null)) {
+            this.dropTarget = null
+        }
+    }
+
+    endCommandDrag (): void {
+        this.dragged = null
+        this.dropTarget = null
+    }
+
+    async dropCommand (event: DragEvent, scope: VisibleScope, path: number[], entries: Entry[]): Promise<void> {
+        const drag = this.dragged
+        if (!drag || drag.entries === entries || event.dataTransfer?.getData(commandDragType) !== 'command') {
+            return
+        }
+        event.preventDefault()
+        this.endCommandDrag()
+        if (!this.managing || !this.expanded || this.editor || this.busy) {
+            return
+        }
+        const source = this.copyScope(drag.scope)
+        const destination = drag.scope === scope ? source : this.copyScope(scope)
+        const from = this.entriesAt(source.entries, drag.parentPath)
+        const to = this.entriesAt(destination.entries, path)
+        const command = from?.[drag.index]
+        if (!from || !to || command?.kind !== 'command') {
+            this.error = 'The command or group is missing. Start the move again.'
+            return
+        }
+        from.splice(drag.index, 1)
+        to.push(command)
+        const changes = destination === source
+            ? new Map([[scope, source]])
+            : new Map([[drag.scope, source], [scope, destination]])
+        await this.persist(changes)
+    }
+
     async save (): Promise<void> {
         const editor = this.editor
         if (!editor || this.busy) {
@@ -171,25 +379,11 @@ export class QuickButtonsComponent implements OnDestroy {
             return
         }
 
-        const settings = this.settings
-        const previous = settings.scopes
-        const existing = previous.find(item => item.profileId === scope.profileId)
-        if (existing !== scope.saved) {
-            this.refreshScopes()
-            this.editor = null
-            this.error = 'Shortcuts changed elsewhere. Start the edit again.'
+        const updated = this.copyScope(scope)
+        const entries = this.entriesAt(updated.entries, parentPath)
+        if (!entries) {
+            this.error = 'The original group is missing. Start the edit again.'
             return
-        }
-
-        const updated: Scope = { profileId: scope.profileId, entries: structuredClone(scope.entries) }
-        let entries = updated.entries
-        for (const groupIndex of parentPath) {
-            const group = entries[groupIndex]
-            if (group?.kind !== 'group') {
-                this.error = 'The original group is missing. Start the edit again.'
-                return
-            }
-            entries = group.entries
         }
 
         if (deleting && index !== undefined) {
@@ -203,10 +397,40 @@ export class QuickButtonsComponent implements OnDestroy {
             }
         }
 
-        const next = previous.filter(item => item.profileId !== scope.profileId)
-        if (updated.entries.length) {
-            next.push(updated)
+        await this.persist(new Map([[scope, updated]]))
+    }
+
+    private copyScope (scope: VisibleScope): Scope {
+        return { profileId: scope.profileId, entries: structuredClone(scope.entries) }
+    }
+
+    private entriesAt (entries: Entry[], path: number[]): Entry[] | undefined {
+        for (const index of path) {
+            const group = entries[index]
+            if (group?.kind !== 'group') {
+                return undefined
+            }
+            entries = group.entries
         }
+        return entries
+    }
+
+    private async persist (changes: Map<VisibleScope, Scope>): Promise<void> {
+        const settings = this.settings
+        const previous = settings.scopes
+        for (const scope of changes.keys()) {
+            if (previous.find(item => item.profileId === scope.profileId) !== scope.saved) {
+                this.refreshScopes()
+                this.editor = null
+                this.error = 'Shortcuts changed elsewhere. Try again.'
+                return
+            }
+        }
+        const updated = [...changes.values()]
+        const next = [
+            ...previous.filter(item => !updated.some(scope => scope.profileId === item.profileId)),
+            ...updated.filter(scope => scope.entries.length),
+        ]
 
         this.busy = true
         this.error = ''

@@ -6,8 +6,7 @@ export const template = `
     <button type="button" class="ball btn btn-primary" [class.moving]="movingBall"
             [class.integrated]="expanded && !movingBall" aria-label="Quick Buttons"
             title="Quick Buttons · Drag to move" [attr.aria-expanded]="expanded && !movingBall"
-            (pointerdown)="startBallDrag($event)"
-            (lostpointercapture)="finishBallDrag($event)" (click)="clickBall($event)">
+            (pointerdown)="startBallDrag($event)" (click)="clickBall($event)">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 7 5 5-5 5m8 0h7"/></svg>
     </button>
@@ -18,14 +17,18 @@ export const template = `
         <section class="panel" aria-label="Quick commands panel" [style.max-height.px]="position.panelHeight">
             <header class="panel-header">
                 <strong>Quick Buttons</strong>
-                <div *ngIf="!managing" class="actions">
-                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                <div class="actions">
+                    <button type="button" class="btn btn-sm"
+                            [class.btn-primary]="pinned" [class.btn-outline-secondary]="!pinned"
+                            [attr.aria-pressed]="pinned" title="Keep the panel open"
+                            (click)="pinned = !pinned">Pin</button>
+                    <button *ngIf="!managing" type="button" class="btn btn-sm btn-outline-secondary"
                             (click)="managing = true">Manage</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Close Quick Buttons"
+                    <button *ngIf="!managing" type="button" class="btn btn-sm btn-outline-secondary" aria-label="Close Quick Buttons"
                             (click)="close()">×</button>
+                    <button *ngIf="managing" type="button" class="btn btn-sm btn-outline-secondary"
+                            [disabled]="busy" (click)="finishManagement()">Done</button>
                 </div>
-                <button *ngIf="managing" type="button" class="btn btn-sm btn-outline-secondary"
-                        [disabled]="busy" (click)="close()">Done</button>
             </header>
             <p *ngIf="managing && !editor" class="move-hint" aria-live="polite">
                 {{ busy ? 'Saving shortcuts…' : 'Drag between commands to reorder, or onto a group to move.' }}
@@ -160,6 +163,7 @@ export const styles = `
     position: fixed;
     z-index: 1020;
 }
+.ball, .panel { -webkit-app-region: no-drag; }
 .ball {
     display: grid;
     place-items: center;

@@ -91,7 +91,7 @@ export class QuickButtonsComponent implements OnDestroy {
     dragged: DraggedCommand | null = null
     dropTarget: DropPosition | null = null
     movingBall = false
-    private pinned = false
+    pinned = false
     private ballPosition = this.loadBallPosition()
     private ballDrag: BallDrag | null = null
     private suppressBallClick = false
@@ -124,7 +124,7 @@ export class QuickButtonsComponent implements OnDestroy {
     get layout () {
         const { width, height } = this.viewport
         const x = this.clamp(this.ballPosition?.x ?? width - ballSize - 24, width - ballSize - edge)
-        const y = this.clamp(this.ballPosition?.y ?? height - ballSize - 16, height - ballSize - edge)
+        const y = this.clampBallY(this.ballPosition?.y ?? height - ballSize - 16)
         const below = y + ballSize / 2 < height / 2
         const anchorRight = x + ballSize / 2 >= width / 2
         const panelWidth = Math.min(380, anchorRight ? x + ballSize - edge : width - x - edge)
@@ -141,6 +141,13 @@ export class QuickButtonsComponent implements OnDestroy {
         return Math.max(edge, Math.min(value, limit))
     }
 
+    private clampBallY (value: number): number {
+        const terminalArea = document.querySelector('app-root .content.main > .content')
+        const top = terminalArea?.getBoundingClientRect().top ?? edge
+        const bottom = Math.max(edge, this.viewport.height - ballSize - edge)
+        return Math.min(bottom, Math.max(edge, top, value))
+    }
+
     private loadBallPosition (): Position | null {
         try {
             const position = JSON.parse(window.localStorage.getItem(positionKey) ?? 'null')
@@ -154,6 +161,8 @@ export class QuickButtonsComponent implements OnDestroy {
         if (event.button !== 0 || !event.isPrimary) {
             return
         }
+        event.preventDefault()
+        this.ballDrag?.listeners.abort()
         this.suppressBallClick = false
         const { x, y } = this.layout
         const listeners = new AbortController()
@@ -163,12 +172,11 @@ export class QuickButtonsComponent implements OnDestroy {
             origin: { x, y },
             listeners,
         }
-        const { signal } = listeners
-        window.addEventListener('pointermove', move => this.moveBall(move), { signal })
-        window.addEventListener('pointerup', up => this.finishBallDrag(up), { signal })
-        window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), { signal })
-        const button = event.currentTarget as HTMLButtonElement
-        button.setPointerCapture(event.pointerId)
+        const options = { capture: true, signal: listeners.signal }
+        window.addEventListener('pointermove', move => this.moveBall(move), options)
+        window.addEventListener('pointerup', up => this.finishBallDrag(up), options)
+        window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), options)
+        window.addEventListener('blur', () => this.finishBallDrag(), options)
     }
 
     private moveBall (event: PointerEvent): void {
@@ -184,12 +192,12 @@ export class QuickButtonsComponent implements OnDestroy {
         this.movingBall = true
         this.ballPosition = {
             x: this.clamp(drag.origin.x + dx, this.viewport.width - ballSize - edge),
-            y: this.clamp(drag.origin.y + dy, this.viewport.height - ballSize - edge),
+            y: this.clampBallY(drag.origin.y + dy),
         }
     }
 
-    finishBallDrag (event: PointerEvent): void {
-        if (this.ballDrag?.pointerId !== event.pointerId) {
+    private finishBallDrag (event?: PointerEvent): void {
+        if (!this.ballDrag || (event && this.ballDrag.pointerId !== event.pointerId)) {
             return
         }
         this.ballDrag.listeners.abort()
@@ -279,6 +287,15 @@ export class QuickButtonsComponent implements OnDestroy {
         }
     }
 
+    finishManagement (): void {
+        if (!this.pinned) {
+            this.close()
+            return
+        }
+        this.managing = false
+        this.cancelEdit()
+    }
+
     execute (command: Command, scope: VisibleScope): void {
         const terminal = this.target
         const session = terminal?.session
@@ -292,7 +309,9 @@ export class QuickButtonsComponent implements OnDestroy {
             return
         }
         terminal.sendInput(`${command.text}${command.sendEnter !== false ? '\r' : ''}`)
-        this.close()
+        if (!this.pinned) {
+            this.close()
+        }
         terminal.emitFocused()
     }
 

@@ -2,7 +2,7 @@
 
 Source code and issue tracker are available on [GitHub](https://github.com/vzpd/tabby-quick-buttons).
 
-Hover over the floating button in a Tabby terminal to open the command panel. The button starts in the lower-right corner. Drag it anywhere in the window to save a new position. Click the **Quick Buttons** icon in the Tabby toolbar to keep the panel open.
+Hover over the floating button in a Tabby terminal to open the command panel. The button starts in the lower-right corner. Drag it anywhere in the window to save a new position. Use **Pin** to keep the panel open while you use shortcuts. Click **Pin** again to resume automatic closing.
 
 - **Shared** groups are available in every terminal. Add commands directly or organize them in nested groups.
 - **Current profile** groups are available only in the matching Tabby profile. Renaming the profile keeps the association. Temporary connections without a profile ID can use shared groups.
@@ -23,7 +23,7 @@ npm pack
 In Tabby, go to **Settings → Plugins** and open the plugin directory. Install the package from that directory using the path to the generated archive:
 
 ```sh
-npm install /absolute/path/to/tabby-quick-buttons-1.0.1.tgz
+npm install /absolute/path/to/tabby-quick-buttons-1.0.2.tgz
 ```
 
 Quit and reopen Tabby, then open a terminal. The plugin uses the Angular and terminal APIs bundled with Tabby.

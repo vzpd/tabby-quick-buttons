@@ -2,11 +2,12 @@ import { DOCUMENT, CommonModule } from '@angular/common'
 import { APP_BOOTSTRAP_LISTENER, ApplicationRef, ComponentRef, EnvironmentInjector, Injectable, NgModule, createComponent } from '@angular/core'
 import { ConfigProvider, ToolbarButton, ToolbarButtonProvider } from 'tabby-core'
 import { Subject } from 'rxjs'
-import { QuickButtonsComponent, QuickButtonsConfig } from './quickButtons.component'
+import { QuickButtonsComponent } from './quickButtons.component'
+import type { QuickButtonsConfig } from './shortcutTree'
 
 class QuickButtonsConfigProvider extends ConfigProvider {
     override defaults: { quickButtons: QuickButtonsConfig } = {
-        quickButtons: { scopes: [] },
+        quickButtons: { scopes: [], floatingButtonColor: null, floatingButtonOpacity: 100 },
     }
 }
 

@@ -24,6 +24,7 @@ The screenshots show the plugin with sample commands. The plugin interface is in
 
 - **Run or insert a command.** Click its alias to send the saved text to the focused terminal pane. **Press Enter after inserting** is on by default. Turn it off to review or edit the line in the terminal before pressing Enter yourself.
 - **Keep the panel handy.** Drag the floating button to position it. Hover to open the panel. Use **Pin** to keep it open and click **Pin** again to restore automatic closing when the pointer leaves.
+- **Customize the floating button.** In **Manage → Appearance**, choose a color and opacity, preview them, and save. **Reset defaults** restores Tabby's theme color and full opacity.
 - **Organize shortcuts.** **Shared** is available across connections. The current profile section is available only when using that saved profile. Both sections support nested groups. Profile-specific groups follow the profile ID when you rename it.
 - **Manage or find a shortcut.** In **Manage**, add, edit, or delete commands and groups. Drag a command to reorder it or move it to another group. Use **Move…** to choose a destination directly. Search by alias across visible groups and press **Esc** to cancel an edit or clear the search.
 
@@ -47,6 +48,7 @@ Tabby Quick Buttons 可以把常用终端命令保存成短别名，点击即可
 
 - **执行或只填入。** 点击别名会发送保存的一行指令。**Press Enter after inserting** 默认开启。关闭后可在终端里检查或修改，再手动回车。
 - **移动或固定面板。** 拖动浮球可以调整位置。悬停展开，移开自动收起。点 **Pin** 后面板会保持展开，再点一次可取消固定。
+- **调整浮球外观。** 打开 **Manage → Appearance**，选择颜色和不透明度，预览后保存。点 **Reset defaults** 可恢复 Tabby 主题颜色和完全不透明。
 - **公共和专属分组。** **Shared** 在所有连接里可用。专属分组只在对应的已保存连接下显示，重命名连接后仍能使用。没有保存配置 ID 的临时连接也能使用 **Shared**。
 - **管理和搜索。** 点 **Manage** 新增、编辑或删除指令和分组。拖动可以排序或换组，也可以点 **Move…** 直接选目标分组。搜索按别名匹配当前可见的指令。按 **Esc** 可以取消当前编辑或清除搜索。
 

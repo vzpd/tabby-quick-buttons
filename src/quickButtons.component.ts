@@ -85,7 +85,7 @@ interface BallDrag {
     handle: HTMLElement
     pointer: Position
     origin: Position
-    listeners: AbortController
+    removeListeners: () => void
 }
 
 const invalidCommandCharacters = /[\x00-\x1f\x7f-\x9f]/
@@ -116,6 +116,7 @@ export class QuickButtonsComponent implements OnDestroy {
     private viewport = { width: window.innerWidth, height: window.innerHeight }
     private panelContext?: Subscription
     private editorOpener?: HTMLElement
+    @ViewChild('dock') private dock?: ElementRef<HTMLElement>
     @ViewChild('doneButton') private doneButton?: ElementRef<HTMLButtonElement>
 
     @ViewChild('editorFocus') set editorFocus (field: ElementRef<HTMLElement> | undefined) {
@@ -224,19 +225,25 @@ export class QuickButtonsComponent implements OnDestroy {
         this.updateViewport()
         const { x, y } = this.layout
         const handle = event.currentTarget as HTMLElement
-        const listeners = new AbortController()
+        const onMove = (move: PointerEvent): void => this.moveBall(move)
+        const onEnd = (end: PointerEvent): void => this.finishBallDrag(end)
+        const onBlur = (): void => this.finishBallDrag()
         this.ballDrag = {
             pointerId: event.pointerId,
             handle,
             pointer: { x: event.clientX, y: event.clientY },
             origin: { x, y },
-            listeners,
+            removeListeners: () => {
+                window.removeEventListener('pointermove', onMove, true)
+                window.removeEventListener('pointerup', onEnd, true)
+                window.removeEventListener('pointercancel', onEnd, true)
+                window.removeEventListener('blur', onBlur)
+            },
         }
-        const options = { capture: true, signal: listeners.signal }
-        window.addEventListener('pointermove', move => this.moveBall(move), options)
-        window.addEventListener('pointerup', up => this.finishBallDrag(up), options)
-        window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), options)
-        window.addEventListener('blur', () => this.finishBallDrag(), { signal: listeners.signal })
+        window.addEventListener('pointermove', onMove, true)
+        window.addEventListener('pointerup', onEnd, true)
+        window.addEventListener('pointercancel', onEnd, true)
+        window.addEventListener('blur', onBlur)
         try {
             handle.setPointerCapture(event.pointerId)
         } catch (error) {
@@ -296,7 +303,7 @@ export class QuickButtonsComponent implements OnDestroy {
 
     private releaseBallDrag (drag: BallDrag): void {
         this.ballDrag = null
-        drag.listeners.abort()
+        drag.removeListeners()
         if (drag.handle.hasPointerCapture(drag.pointerId)) {
             drag.handle.releasePointerCapture(drag.pointerId)
         }
@@ -332,6 +339,7 @@ export class QuickButtonsComponent implements OnDestroy {
         const tab = this.app.activeTab
         this.panelContext?.unsubscribe()
         this.panelContext = this.app.activeTabChange$.subscribe(() => this.close())
+        this.watchPanelHover(this.panelContext)
         if (tab instanceof SplitTabComponent) {
             this.panelContext.add(tab.focusChanged$.subscribe(pane => {
                 if (pane !== terminal) {
@@ -339,6 +347,27 @@ export class QuickButtonsComponent implements OnDestroy {
                 }
             }))
         }
+    }
+
+    private watchPanelHover (context: Subscription): void {
+        const onMove = (event: MouseEvent): void => {
+            if (this.pinned || this.managing || this.ballDrag) {
+                return
+            }
+            const hit = document.elementFromPoint(event.clientX, event.clientY)
+            if (this.dock && !this.dock.nativeElement.contains(hit)) {
+                this.zone.run(() => this.leave())
+            }
+        }
+        const onBlur = (): void => this.zone.run(() => this.leave())
+        this.zone.runOutsideAngular(() => {
+            document.addEventListener('mousemove', onMove, true)
+            window.addEventListener('blur', onBlur)
+        })
+        context.add(() => {
+            document.removeEventListener('mousemove', onMove, true)
+            window.removeEventListener('blur', onBlur)
+        })
     }
 
     close (): void {

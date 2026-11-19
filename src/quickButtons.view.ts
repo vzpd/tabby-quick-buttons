@@ -1,16 +1,18 @@
 export const template = `
-<div class="dock" *ngIf="activeTerminal && layout as position"
+<div #dock class="dock" *ngIf="activeTerminal && layout as position"
+     [class.auto-hide]="!pinned && !managing"
      [style.left.px]="position.x" [style.top.px]="position.y"
-     (pointerenter)="open()" (pointerleave)="leave()"
+     (mouseenter)="open()" (mouseleave)="leave()"
      (keydown.escape)="$event.stopPropagation(); escape()">
     <div class="ball btn btn-primary" [class.moving]="movingBall"
          [class.integrated]="expanded && !movingBall" aria-hidden="true"
-         title="Quick Buttons · Drag to move" (pointerdown)="startBallDrag($event)">
+         title="Quick Buttons · Drag to move"
+         (pointerdown)="startBallDrag($event)">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 7 5 5-5 5m8 0h7"/></svg>
     </div>
 
-    <div class="panel-position" *ngIf="expanded && !movingBall" [class.below]="position.below"
+    <div class="panel-position" *ngIf="expanded" [class.drag-hidden]="movingBall" [class.below]="position.below"
          [class.anchor-right]="position.anchorRight"
          [style.left.px]="position.panelOffset" [style.width.px]="position.panelWidth">
         <section class="panel" aria-label="Quick commands panel" [style.max-height.px]="position.panelHeight">
@@ -246,19 +248,20 @@ export const styles = `
 }
 .ball.moving { cursor: grabbing; }
 .ball svg { pointer-events: none; }
-.ball.integrated {
+.dock:hover .ball.integrated, .dock:not(.auto-hide) .ball.integrated {
     border-color: transparent;
     border-radius: 8px;
     color: var(--bs-body-color);
     background: transparent;
     box-shadow: none;
 }
-.ball.integrated:hover { background: #80808026; }
+.dock .ball.integrated:hover { background: #80808026; }
 .panel-position {
     position: absolute;
     bottom: 0;
 }
 .panel-position.below { top: 0; bottom: auto; }
+.panel-position.drag-hidden, .dock.auto-hide:not(:hover) .panel-position { visibility: hidden; pointer-events: none; }
 .panel {
     display: flex;
     flex-direction: column;

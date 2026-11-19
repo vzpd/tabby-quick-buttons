@@ -23,7 +23,7 @@ npm pack
 In Tabby, go to **Settings → Plugins** and open the plugin directory. Install the package from that directory using the path to the generated archive:
 
 ```sh
-npm install /absolute/path/to/tabby-quick-buttons-1.0.2.tgz
+npm install /absolute/path/to/tabby-quick-buttons-1.0.3.tgz
 ```
 
 Quit and reopen Tabby, then open a terminal. The plugin uses the Angular and terminal APIs bundled with Tabby.

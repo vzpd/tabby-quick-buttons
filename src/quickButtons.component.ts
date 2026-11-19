@@ -94,7 +94,6 @@ export class QuickButtonsComponent implements OnDestroy {
     pinned = false
     private ballPosition = this.loadBallPosition()
     private ballDrag: BallDrag | null = null
-    private suppressBallClick = false
     private viewport = { width: window.innerWidth, height: window.innerHeight }
     private panelContext?: Subscription
     private readonly groupKeys = new WeakMap<Group, symbol>()
@@ -115,6 +114,10 @@ export class QuickButtonsComponent implements OnDestroy {
 
     get expanded (): boolean {
         return this.target !== null && this.target === this.activeTerminal
+    }
+
+    get draggingBall (): boolean {
+        return this.ballDrag !== null
     }
 
     private get settings (): QuickButtonsConfig {
@@ -163,7 +166,6 @@ export class QuickButtonsComponent implements OnDestroy {
         }
         event.preventDefault()
         this.ballDrag?.listeners.abort()
-        this.suppressBallClick = false
         const { x, y } = this.layout
         const listeners = new AbortController()
         this.ballDrag = {
@@ -176,12 +178,16 @@ export class QuickButtonsComponent implements OnDestroy {
         window.addEventListener('pointermove', move => this.moveBall(move), options)
         window.addEventListener('pointerup', up => this.finishBallDrag(up), options)
         window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), options)
-        window.addEventListener('blur', () => this.finishBallDrag(), options)
+        window.addEventListener('blur', () => this.finishBallDrag(), { signal: listeners.signal })
     }
 
     private moveBall (event: PointerEvent): void {
         const drag = this.ballDrag
         if (!drag || drag.pointerId !== event.pointerId) {
+            return
+        }
+        if ((event.buttons & 1) === 0) {
+            this.finishBallDrag(event)
             return
         }
         const dx = event.clientX - drag.pointer.x
@@ -206,7 +212,6 @@ export class QuickButtonsComponent implements OnDestroy {
             return
         }
         this.movingBall = false
-        this.suppressBallClick = true
         if (!this.pinned && !this.managing) {
             this.close()
         }
@@ -215,14 +220,6 @@ export class QuickButtonsComponent implements OnDestroy {
         } catch {
             this.notifications.info('Quick Buttons moved. This window could not save its position.')
         }
-    }
-
-    clickBall (event: MouseEvent): void {
-        if (event.detail && this.suppressBallClick) {
-            this.suppressBallClick = false
-            return
-        }
-        this.togglePinned()
     }
 
     togglePinned (): void {
@@ -243,7 +240,7 @@ export class QuickButtonsComponent implements OnDestroy {
 
     open (): void {
         const terminal = this.activeTerminal
-        if (!terminal || this.expanded || this.busy || this.movingBall) {
+        if (!terminal || this.expanded || this.busy || this.draggingBall) {
             return
         }
         this.target = terminal

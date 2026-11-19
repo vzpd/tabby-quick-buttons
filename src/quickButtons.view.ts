@@ -3,13 +3,13 @@ export const template = `
      [style.left.px]="position.x" [style.top.px]="position.y"
      (pointerenter)="open()" (pointerleave)="leave()"
      (keydown.escape)="$event.stopPropagation(); close()">
-    <button type="button" class="ball btn btn-primary" [class.moving]="movingBall"
-            [class.integrated]="expanded && !movingBall" aria-label="Quick Buttons"
-            title="Quick Buttons · Drag to move" [attr.aria-expanded]="expanded && !movingBall"
-            (pointerdown)="startBallDrag($event)" (click)="clickBall($event)">
+    <div *ngIf="draggingBall" class="ball-drag-surface" aria-hidden="true"></div>
+    <div class="ball btn btn-primary" [class.moving]="movingBall"
+         [class.integrated]="expanded && !movingBall" aria-hidden="true"
+         title="Quick Buttons · Drag to move" (pointerdown)="startBallDrag($event)">
         <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 7 5 5-5 5m8 0h7"/></svg>
-    </button>
+    </div>
 
     <div class="panel-position" *ngIf="expanded && !movingBall" [class.below]="position.below"
          [class.anchor-right]="position.anchorRight"
@@ -163,8 +163,16 @@ export const styles = `
     position: fixed;
     z-index: 1020;
 }
-.ball, .panel { -webkit-app-region: no-drag; }
+.ball, .panel, .ball-drag-surface { -webkit-app-region: no-drag; }
+.ball-drag-surface {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    cursor: grabbing;
+}
 .ball {
+    position: relative;
+    z-index: 3;
     display: grid;
     place-items: center;
     place-content: center;
@@ -180,8 +188,6 @@ export const styles = `
 .ball.moving { cursor: grabbing; }
 .ball svg { pointer-events: none; }
 .ball.integrated {
-    position: relative;
-    z-index: 1;
     border-color: transparent;
     border-radius: 8px;
     color: var(--bs-body-color);
@@ -189,7 +195,6 @@ export const styles = `
     box-shadow: none;
 }
 .ball.integrated:hover { background: #80808026; }
-.ball.integrated:focus-visible { outline: 2px solid var(--bs-primary, #9689eb); outline-offset: -3px; }
 .panel-position {
     position: absolute;
     bottom: 0;

@@ -30,40 +30,60 @@ export const template = `
                             [disabled]="busy || !!editor" (click)="finishManagement()">Done</button>
                 </div>
             </header>
-            <p *ngIf="managing && !editor" class="move-hint" aria-live="polite">
+            <div *ngIf="!editor" class="search-bar">
+                <input #searchInput type="search" class="form-control form-control-sm" aria-label="Search shortcuts"
+                       placeholder="Search by alias" autocomplete="off" [value]="searchQuery"
+                       (input)="searchQuery = searchInput.value">
+                <button *ngIf="searchQuery" type="button" class="btn btn-sm btn-outline-secondary"
+                        aria-label="Clear search" (click)="searchQuery = ''; searchInput.focus()">×</button>
+            </div>
+            <p *ngIf="managing && !editor && (!searchQuery.trim() || busy)" class="move-hint" aria-live="polite">
                 {{ busy ? 'Saving shortcuts…' : 'Drag to reorder or move between groups.' }}
             </p>
 
             <form *ngIf="editor as draft" class="editor" (submit)="$event.preventDefault(); save()" [attr.aria-busy]="busy">
                 <div class="editor-heading">
                     <strong *ngIf="!draft.deleting">
-                        {{ draft.index === undefined ? 'Add' : 'Edit' }} {{ draft.entry.kind }}
+                        {{ draft.move ? 'Move “' + draft.entry.title + '”' :
+                            (draft.index === undefined ? 'Add ' : 'Edit ') + draft.entry.kind }}
                     </strong>
                     <strong *ngIf="draft.deleting">Delete “{{ draft.entry.title }}”?</strong>
                     <div class="editor-location">{{ draft.location }}</div>
                 </div>
-                <ng-container *ngIf="!draft.deleting; else deletePrompt">
-                    <label>
-                        {{ draft.entry.kind === 'group' ? 'Group name' : 'Command alias' }}
-                        <input #editorFocus class="form-control form-control-sm" required [disabled]="busy"
-                               [value]="draft.entry.title" (input)="draft.entry.title = $any($event.target).value">
-                    </label>
-                    <label *ngIf="draft.entry.kind === 'command'">
-                        Command text
-                        <input class="form-control form-control-sm command-input" required autocomplete="off"
-                               spellcheck="false" autocapitalize="off" [disabled]="busy" [value]="draft.entry.text"
-                               (input)="draft.entry.text = $any($event.target).value">
-                    </label>
-                    <label *ngIf="draft.entry.kind === 'command'" class="enter-option">
-                        <input type="checkbox" [disabled]="busy" [checked]="draft.entry.sendEnter !== false"
-                               (change)="draft.entry.sendEnter = $any($event.target).checked">
-                        Press Enter after inserting
-                    </label>
-                </ng-container>
-                <ng-template #deletePrompt>
-                    <p class="delete-impact" *ngIf="draft.entry.kind === 'group' && draft.entry.entries.length">
-                        This also deletes its commands and subgroups.
-                    </p>
+                <label *ngIf="draft.move as move; else standardEditor">
+                    Destination
+                    <select #editorFocus class="form-select form-select-sm" required [disabled]="busy"
+                            (change)="move.selected = +$any($event.target).value" [value]="move.selected">
+                        <option value="-1" disabled>Choose a group</option>
+                        <option *ngFor="let target of move.destinations; let index = index" [value]="index">
+                            {{ target.location }}
+                        </option>
+                    </select>
+                </label>
+                <ng-template #standardEditor>
+                    <ng-container *ngIf="!draft.deleting; else deletePrompt">
+                        <label>
+                            {{ draft.entry.kind === 'group' ? 'Group name' : 'Command alias' }}
+                            <input #editorFocus class="form-control form-control-sm" required [disabled]="busy"
+                                   [value]="draft.entry.title" (input)="draft.entry.title = $any($event.target).value">
+                        </label>
+                        <label *ngIf="draft.entry.kind === 'command'">
+                            Command text
+                            <input class="form-control form-control-sm command-input" required autocomplete="off"
+                                   spellcheck="false" autocapitalize="off" [disabled]="busy" [value]="draft.entry.text"
+                                   (input)="draft.entry.text = $any($event.target).value">
+                        </label>
+                        <label *ngIf="draft.entry.kind === 'command'" class="enter-option">
+                            <input type="checkbox" [disabled]="busy" [checked]="draft.entry.sendEnter !== false"
+                                   (change)="draft.entry.sendEnter = $any($event.target).checked">
+                            Press Enter after inserting
+                        </label>
+                    </ng-container>
+                    <ng-template #deletePrompt>
+                        <p class="delete-impact" *ngIf="draft.entry.kind === 'group' && draft.entry.entries.length">
+                            This also deletes its commands and subgroups.
+                        </p>
+                    </ng-template>
                 </ng-template>
                 <p class="error text-danger" *ngIf="error" role="alert">{{ error }}</p>
                 <div class="actions">
@@ -71,9 +91,9 @@ export const template = `
                               [disabled]="busy" (click)="cancelEdit()">Cancel</button></ng-template>
                     <button *ngIf="draft.deleting; else cancelButton" #editorFocus type="button"
                             class="btn btn-sm btn-outline-secondary" [disabled]="busy" (click)="cancelEdit()">Cancel</button>
-                    <button type="submit" class="btn btn-sm" [disabled]="busy"
+                    <button type="submit" class="btn btn-sm" [disabled]="busy || (draft.move && draft.move.selected < 0)"
                             [class.btn-danger]="draft.deleting" [class.btn-primary]="!draft.deleting">
-                        {{ busy ? 'Saving…' : draft.deleting ? 'Confirm deletion' :
+                        {{ busy ? 'Saving…' : draft.move ? 'Move command' : draft.deleting ? 'Confirm deletion' :
                             draft.index === undefined ? 'Add ' + draft.entry.kind : 'Save changes' }}
                     </button>
                 </div>
@@ -81,23 +101,45 @@ export const template = `
             <p class="error text-danger" *ngIf="error && !editor" role="alert">{{ error }}</p>
 
             <div class="scope-list" [class.is-managing]="managing" [hidden]="!!editor">
-                <section class="scope" *ngFor="let scope of scopes; trackBy: trackScope">
-                    <div class="row-heading"
-                         [class.drop-ready]="dragged && dragged.entries !== scope.entries"
-                         [class.drop-active]="dropTarget?.entries === scope.entries && dropTarget?.rowIndex === undefined"
-                         (dragover)="dragOver($event, scope.entries)"
-                         (dragleave)="dragLeave($event, scope.entries)"
-                         (drop)="dropCommand($event, scope, [], scope.entries)">
-                        <strong class="scope-title">{{ scope.title }}</strong>
-                        <span class="scope-tag" *ngIf="scope.profileId !== null">Current profile</span>
-                    </div>
-                    <ng-container *ngTemplateOutlet="entryList; context: {
-                        $implicit: scope.entries, scope: scope, path: []
-                    }"></ng-container>
-                </section>
-                <p *ngIf="managing && scopes.length === 1" class="empty profile-hint">
-                    Open a saved Tabby profile to create profile-specific groups.
-                </p>
+                <div *ngIf="searchQuery.trim()" class="search-results">
+                    <ng-container *ngIf="searchResults as matches">
+                        <p *ngIf="!matches.length" class="empty" role="status">No shortcuts match this alias.</p>
+                        <div *ngFor="let match of matches; trackBy: trackMatch" class="search-result command-row">
+                            <button *ngIf="!managing; else manageResult" type="button" class="command-run"
+                                    [disabled]="!target?.session?.open" (click)="execute(match.entry, match.scope)">
+                                <span class="command-alias">{{ match.entry.title }}</span>
+                                <small class="result-location">{{ match.location }}</small>
+                            </button>
+                            <ng-template #manageResult>
+                                <span class="command-label">
+                                    <span class="command-alias">{{ match.entry.title }}</span>
+                                    <small class="result-location">{{ match.location }}</small>
+                                </span>
+                                <ng-container *ngTemplateOutlet="rowActions; context: { $implicit: match.entry,
+                                    scope: match.scope, path: match.parentPath, index: match.index }"></ng-container>
+                            </ng-template>
+                        </div>
+                    </ng-container>
+                </div>
+                <div [hidden]="!!searchQuery.trim()">
+                    <section class="scope" *ngFor="let scope of scopes; trackBy: trackScope">
+                        <div class="row-heading"
+                             [class.drop-ready]="dragged && dragged.entries !== scope.entries"
+                             [class.drop-active]="dropTarget?.entries === scope.entries && dropTarget?.rowIndex === undefined"
+                             (dragover)="dragOver($event, scope.entries)"
+                             (dragleave)="dragLeave($event, scope.entries)"
+                             (drop)="dropCommand($event, scope, [], scope.entries)">
+                            <strong class="scope-title">{{ scope.title }}</strong>
+                            <span class="scope-tag" *ngIf="scope.profileId !== null">Current profile</span>
+                        </div>
+                        <ng-container *ngTemplateOutlet="entryList; context: {
+                            $implicit: scope.entries, scope: scope, path: []
+                        }"></ng-container>
+                    </section>
+                    <p *ngIf="managing && scopes.length === 1" class="empty profile-hint">
+                        Open a saved Tabby profile to create profile-specific groups.
+                    </p>
+                </div>
             </div>
         </section>
     </div>
@@ -123,7 +165,9 @@ export const template = `
                              (drop)="dropCommand($event, scope, path.concat(index), entry.entries)">
                         <span class="group-title">{{ entry.title }}</span>
                         <span class="actions group-controls" *ngIf="managing">
-                            <ng-container *ngTemplateOutlet="editActions"></ng-container>
+                            <ng-container *ngTemplateOutlet="rowActions; context: {
+                                $implicit: entry, scope: scope, path: path, index: index
+                            }"></ng-container>
                         </span>
                     </summary>
                     <div class="nested">
@@ -153,21 +197,30 @@ export const template = `
                             [disabled]="!target?.session?.open" (click)="execute(entry, scope)">
                         <span class="command-alias">{{ entry.title }}</span>
                     </button>
-                    <div class="actions" *ngIf="managing">
-                        <ng-container *ngTemplateOutlet="editActions"></ng-container>
-                    </div>
+                    <ng-container *ngIf="managing">
+                        <ng-container *ngTemplateOutlet="rowActions; context: {
+                            $implicit: entry, scope: scope, path: path, index: index
+                        }"></ng-container>
+                    </ng-container>
                 </div>
-            </ng-template>
-            <ng-template #editActions>
-                <button type="button" class="btn btn-sm btn-outline-secondary"
-                        [disabled]="editor || busy" [attr.aria-label]="'Edit ' + entry.title"
-                        (click)="edit(scope, path, index, entry, false, $event)">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-danger"
-                        [disabled]="editor || busy" [attr.aria-label]="'Delete ' + entry.title"
-                        (click)="edit(scope, path, index, entry, true, $event)">Delete</button>
             </ng-template>
         </div>
     </div>
+</ng-template>
+
+<ng-template #rowActions let-entry let-scope="scope" let-path="path" let-index="index">
+    <span class="actions entry-actions">
+        <button *ngIf="entry.kind === 'command' && hasMoveDestination(scope, path)" type="button"
+                class="btn btn-sm btn-outline-secondary" [disabled]="editor || busy"
+                [attr.aria-label]="'Move ' + entry.title"
+                (click)="startMove(scope, path, index, entry, $event)">Move…</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                [disabled]="editor || busy" [attr.aria-label]="'Edit ' + entry.title"
+                (click)="edit(scope, path, index, entry, false, $event)">Edit</button>
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                [disabled]="editor || busy" [attr.aria-label]="'Delete ' + entry.title"
+                (click)="edit(scope, path, index, entry, true, $event)">Delete</button>
+    </span>
 </ng-template>
 `
 
@@ -243,6 +296,13 @@ export const styles = `
 }
 .panel-position.anchor-right .panel-header { padding: 6px 58px 6px 12px; }
 .move-hint { margin: 0; padding: 8px 12px; font-size: .85em; background: #80808012; }
+.search-bar { display: flex; gap: 6px; padding: 8px 12px; }
+.search-bar input { min-width: 0; }
+.search-bar input::-webkit-search-cancel-button { display: none; }
+.search-results { display: grid; gap: 5px; padding-block: 3px; }
+.search-result .command-run { width: 100%; }
+.result-location { display: block; color: var(--bs-secondary-color, inherit); overflow-wrap: anywhere; }
+.search-results .command-label { min-width: 0; }
 .scope-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px 10px; }
 .scope-list[hidden] { display: none; }
 .scope { padding: 8px 0; }
@@ -308,6 +368,8 @@ details[open] > summary::before { transform: rotate(90deg); }
 .command-run:disabled { opacity: .5; }
 .actions { flex-wrap: wrap; }
 .command-row > .actions { flex: none; }
+.entry-actions { justify-content: flex-end; gap: 4px; }
+.command-row > .entry-actions { max-width: 64%; }
 .group-actions { margin: 5px 0 7px; gap: 5px; }
 .editor {
     display: grid;

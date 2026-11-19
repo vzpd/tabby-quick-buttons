@@ -43,13 +43,29 @@ interface Editor {
     entry: Entry
     deleting: boolean
     location: string
+    move?: { destinations: GroupLocation[], selected: number }
 }
 
-interface DraggedCommand {
+interface GroupLocation {
     scope: VisibleScope
     parentPath: number[]
     entries: Entry[]
+    location: string
+}
+
+interface CommandPosition {
+    scope: VisibleScope
+    parentPath: number[]
     index: number
+}
+
+interface SearchResult extends CommandPosition {
+    entry: Command
+    location: string
+}
+
+interface DraggedCommand extends CommandPosition {
+    entries: Entry[]
 }
 
 interface DropPosition {
@@ -93,6 +109,7 @@ export class QuickButtonsComponent implements OnDestroy {
     dropTarget: DropPosition | null = null
     movingBall = false
     pinned = false
+    searchQuery = ''
     private ballPosition = this.loadBallPosition()
     private ballDrag: BallDrag | null = null
     private viewport = { width: window.innerWidth, height: window.innerHeight }
@@ -132,6 +149,36 @@ export class QuickButtonsComponent implements OnDestroy {
 
     private get settings (): QuickButtonsConfig {
         return this.config.store.quickButtons
+    }
+
+    get searchResults (): SearchResult[] {
+        const query = this.searchQuery.trim().toLocaleLowerCase()
+        if (!query) {
+            return []
+        }
+        return this.groupLocations().flatMap(({ scope, parentPath, entries, location }) =>
+            entries.flatMap((entry, index) => entry.kind === 'command' && entry.title.toLocaleLowerCase().includes(query)
+                ? [{ scope, parentPath, index, entry, location }]
+                : []),
+        )
+    }
+
+    trackMatch (_index: number, match: SearchResult): Command {
+        return match.entry
+    }
+
+    private groupLocations (): GroupLocation[] {
+        const groups: GroupLocation[] = []
+        const visit = (scope: VisibleScope, parentPath: number[], entries: Entry[], location: string): void => {
+            groups.push({ scope, parentPath, entries, location })
+            entries.forEach((entry, index) => {
+                if (entry.kind === 'group') {
+                    visit(scope, parentPath.concat(index), entry.entries, `${location} / ${entry.title}`)
+                }
+            })
+        }
+        this.scopes.forEach(scope => visit(scope, [], scope.entries, scope.title))
+        return groups
     }
 
     get layout () {
@@ -276,6 +323,7 @@ export class QuickButtonsComponent implements OnDestroy {
         this.target = null
         this.managing = false
         this.pinned = false
+        this.searchQuery = ''
         this.editor = null
         this.editorOpener = undefined
         this.error = ''
@@ -310,6 +358,8 @@ export class QuickButtonsComponent implements OnDestroy {
         }
         if (this.editor) {
             this.cancelEdit()
+        } else if (this.searchQuery) {
+            this.searchQuery = ''
         } else {
             this.close()
         }
@@ -343,6 +393,16 @@ export class QuickButtonsComponent implements OnDestroy {
 
     edit (scope: VisibleScope, parentPath: number[], index: number, entry: Entry, deleting = false, event?: MouseEvent): void {
         this.setEditor({ scope, parentPath, index, entry: { ...entry }, deleting }, event)
+    }
+
+    startMove (scope: VisibleScope, parentPath: number[], index: number, entry: Command, event: MouseEvent): void {
+        const currentEntries = this.entriesAt(scope.entries, parentPath)
+        const destinations = this.groupLocations().filter(group => group.entries !== currentEntries)
+        this.setEditor({ scope, parentPath, index, entry, deleting: false, move: { destinations, selected: -1 } }, event)
+    }
+
+    hasMoveDestination (scope: VisibleScope, path: number[]): boolean {
+        return path.length > 0 || this.scopes.length > 1 || scope.entries.some(entry => entry.kind === 'group')
     }
 
     private setEditor (editor: Omit<Editor, 'location'>, event?: MouseEvent): void {
@@ -438,21 +498,26 @@ export class QuickButtonsComponent implements OnDestroy {
         if (!this.managing || !this.expanded || this.editor || this.busy) {
             return
         }
-        const source = this.copyScope(drag.scope)
-        const destination = drag.scope === scope ? source : this.copyScope(scope)
-        const from = this.entriesAt(source.entries, drag.parentPath)
+        await this.moveCommand(drag, scope, path, position.insertAt)
+    }
+
+    private async moveCommand (origin: CommandPosition, scope: VisibleScope, path: number[], requestedIndex?: number): Promise<void> {
+        const source = this.copyScope(origin.scope)
+        const destination = origin.scope === scope ? source : this.copyScope(scope)
+        const from = this.entriesAt(source.entries, origin.parentPath)
         const to = this.entriesAt(destination.entries, path)
-        const command = from?.[drag.index]
+        const command = from?.[origin.index]
         if (!from || !to || command?.kind !== 'command') {
             this.error = 'The command or group is missing. Start the move again.'
             return
         }
-        const insertAt = position.insertAt - Number(from === to && drag.index < position.insertAt)
-        from.splice(drag.index, 1)
+        const index = requestedIndex ?? to.length
+        const insertAt = index - Number(from === to && origin.index < index)
+        from.splice(origin.index, 1)
         to.splice(insertAt, 0, command)
         const changes = destination === source
             ? new Map([[scope, source]])
-            : new Map([[drag.scope, source], [scope, destination]])
+            : new Map([[origin.scope, source], [scope, destination]])
         await this.persist(changes)
     }
 
@@ -463,6 +528,13 @@ export class QuickButtonsComponent implements OnDestroy {
         }
 
         const { scope, parentPath, index, entry, deleting } = editor
+        if (editor.move && index !== undefined) {
+            const target = editor.move.destinations[editor.move.selected]
+            if (target) {
+                await this.moveCommand({ scope, parentPath, index }, target.scope, target.parentPath)
+            }
+            return
+        }
         if (!deleting && (!entry.title.trim() || (entry.kind === 'command' &&
             (!entry.text.trim() || invalidCommandCharacters.test(entry.text))))) {
             this.error = entry.kind === 'group' ? 'Enter a group name.' : 'Enter an alias and a single line of terminal text.'

@@ -3,7 +3,6 @@ export const template = `
      [style.left.px]="position.x" [style.top.px]="position.y"
      (pointerenter)="open()" (pointerleave)="leave()"
      (keydown.escape)="$event.stopPropagation(); escape()">
-    <div *ngIf="draggingBall" class="ball-drag-surface" aria-hidden="true"></div>
     <div class="ball btn btn-primary" [class.moving]="movingBall"
          [class.integrated]="expanded && !movingBall" aria-hidden="true"
          title="Quick Buttons · Drag to move" (pointerdown)="startBallDrag($event)">
@@ -229,13 +228,7 @@ export const styles = `
     position: fixed;
     z-index: 1020;
 }
-.ball, .panel, .ball-drag-surface { -webkit-app-region: no-drag; }
-.ball-drag-surface {
-    position: fixed;
-    inset: 0;
-    z-index: 2;
-    cursor: grabbing;
-}
+.ball, .panel { -webkit-app-region: no-drag; }
 .ball {
     position: relative;
     z-index: 3;

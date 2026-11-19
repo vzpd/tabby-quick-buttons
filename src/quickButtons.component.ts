@@ -82,6 +82,7 @@ interface Position {
 
 interface BallDrag {
     pointerId: number
+    handle: HTMLElement
     pointer: Position
     origin: Position
     listeners: AbortController
@@ -143,10 +144,6 @@ export class QuickButtonsComponent implements OnDestroy {
         return this.target !== null && this.target === this.activeTerminal
     }
 
-    get draggingBall (): boolean {
-        return this.ballDrag !== null
-    }
-
     private get settings (): QuickButtonsConfig {
         return this.config.store.quickButtons
     }
@@ -193,6 +190,7 @@ export class QuickButtonsComponent implements OnDestroy {
     }
 
     @HostListener('window:resize')
+    @HostListener('document:fullscreenchange')
     updateViewport (): void {
         this.viewport = { width: window.innerWidth, height: window.innerHeight }
     }
@@ -222,11 +220,14 @@ export class QuickButtonsComponent implements OnDestroy {
             return
         }
         event.preventDefault()
-        this.ballDrag?.listeners.abort()
+        this.finishBallDrag()
+        this.updateViewport()
         const { x, y } = this.layout
+        const handle = event.currentTarget as HTMLElement
         const listeners = new AbortController()
         this.ballDrag = {
             pointerId: event.pointerId,
+            handle,
             pointer: { x: event.clientX, y: event.clientY },
             origin: { x, y },
             listeners,
@@ -236,6 +237,13 @@ export class QuickButtonsComponent implements OnDestroy {
         window.addEventListener('pointerup', up => this.finishBallDrag(up), options)
         window.addEventListener('pointercancel', cancel => this.finishBallDrag(cancel), options)
         window.addEventListener('blur', () => this.finishBallDrag(), { signal: listeners.signal })
+        try {
+            handle.setPointerCapture(event.pointerId)
+        } catch (error) {
+            if (!(error instanceof DOMException) || error.name !== 'NotFoundError') {
+                throw error
+            }
+        }
     }
 
     private moveBall (event: PointerEvent): void {
@@ -247,6 +255,10 @@ export class QuickButtonsComponent implements OnDestroy {
             this.finishBallDrag(event)
             return
         }
+        this.updateBallPosition(event, drag)
+    }
+
+    private updateBallPosition (event: PointerEvent, drag: BallDrag): void {
         const dx = event.clientX - drag.pointer.x
         const dy = event.clientY - drag.pointer.y
         if (!this.movingBall && Math.hypot(dx, dy) < 5) {
@@ -260,11 +272,14 @@ export class QuickButtonsComponent implements OnDestroy {
     }
 
     private finishBallDrag (event?: PointerEvent): void {
-        if (!this.ballDrag || (event && this.ballDrag.pointerId !== event.pointerId)) {
+        const drag = this.ballDrag
+        if (!drag || (event && drag.pointerId !== event.pointerId)) {
             return
         }
-        this.ballDrag.listeners.abort()
-        this.ballDrag = null
+        if (event?.type === 'pointerup') {
+            this.updateBallPosition(event, drag)
+        }
+        this.releaseBallDrag(drag)
         if (!this.movingBall) {
             return
         }
@@ -276,6 +291,14 @@ export class QuickButtonsComponent implements OnDestroy {
             window.localStorage.setItem(positionKey, JSON.stringify(this.ballPosition))
         } catch {
             this.notifications.info('Quick Buttons moved. This window could not save its position.')
+        }
+    }
+
+    private releaseBallDrag (drag: BallDrag): void {
+        this.ballDrag = null
+        drag.listeners.abort()
+        if (drag.handle.hasPointerCapture(drag.pointerId)) {
+            drag.handle.releasePointerCapture(drag.pointerId)
         }
     }
 
@@ -297,7 +320,7 @@ export class QuickButtonsComponent implements OnDestroy {
 
     open (): void {
         const terminal = this.activeTerminal
-        if (!terminal || this.expanded || this.busy || this.draggingBall) {
+        if (!terminal || this.expanded || this.busy || this.ballDrag) {
             return
         }
         this.target = terminal
@@ -328,8 +351,9 @@ export class QuickButtonsComponent implements OnDestroy {
         this.editorOpener = undefined
         this.error = ''
         this.endCommandDrag()
-        this.ballDrag?.listeners.abort()
-        this.ballDrag = null
+        if (this.ballDrag) {
+            this.releaseBallDrag(this.ballDrag)
+        }
         this.movingBall = false
     }
 

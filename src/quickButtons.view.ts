@@ -2,7 +2,7 @@ export const template = `
 <div class="dock" *ngIf="activeTerminal && layout as position"
      [style.left.px]="position.x" [style.top.px]="position.y"
      (pointerenter)="open()" (pointerleave)="leave()"
-     (keydown.escape)="$event.stopPropagation(); close()">
+     (keydown.escape)="$event.stopPropagation(); escape()">
     <div *ngIf="draggingBall" class="ball-drag-surface" aria-hidden="true"></div>
     <div class="ball btn btn-primary" [class.moving]="movingBall"
          [class.integrated]="expanded && !movingBall" aria-hidden="true"
@@ -16,7 +16,7 @@ export const template = `
          [style.left.px]="position.panelOffset" [style.width.px]="position.panelWidth">
         <section class="panel" aria-label="Quick commands panel" [style.max-height.px]="position.panelHeight">
             <header class="panel-header">
-                <strong>Quick Buttons</strong>
+                <strong>{{ managing ? 'Manage shortcuts' : 'Quick Buttons' }}</strong>
                 <div class="actions">
                     <button type="button" class="btn btn-sm"
                             [class.btn-primary]="pinned" [class.btn-outline-secondary]="!pinned"
@@ -26,25 +26,32 @@ export const template = `
                             (click)="managing = true">Manage</button>
                     <button *ngIf="!managing" type="button" class="btn btn-sm btn-outline-secondary" aria-label="Close Quick Buttons"
                             (click)="close()">×</button>
-                    <button *ngIf="managing" type="button" class="btn btn-sm btn-outline-secondary"
-                            [disabled]="busy" (click)="finishManagement()">Done</button>
+                    <button *ngIf="managing" #doneButton type="button" class="btn btn-sm btn-outline-secondary"
+                            [disabled]="busy || !!editor" (click)="finishManagement()">Done</button>
                 </div>
             </header>
             <p *ngIf="managing && !editor" class="move-hint" aria-live="polite">
-                {{ busy ? 'Saving shortcuts…' : 'Drag between commands to reorder, or onto a group to move.' }}
+                {{ busy ? 'Saving shortcuts…' : 'Drag to reorder or move between groups.' }}
             </p>
 
-            <form *ngIf="editor as draft" class="editor" (submit)="$event.preventDefault(); save()">
+            <form *ngIf="editor as draft" class="editor" (submit)="$event.preventDefault(); save()" [attr.aria-busy]="busy">
+                <div class="editor-heading">
+                    <strong *ngIf="!draft.deleting">
+                        {{ draft.index === undefined ? 'Add' : 'Edit' }} {{ draft.entry.kind }}
+                    </strong>
+                    <strong *ngIf="draft.deleting">Delete “{{ draft.entry.title }}”?</strong>
+                    <div class="editor-location">{{ draft.location }}</div>
+                </div>
                 <ng-container *ngIf="!draft.deleting; else deletePrompt">
                     <label>
                         {{ draft.entry.kind === 'group' ? 'Group name' : 'Command alias' }}
-                        <input class="form-control form-control-sm" required [disabled]="busy"
+                        <input #editorFocus class="form-control form-control-sm" required [disabled]="busy"
                                [value]="draft.entry.title" (input)="draft.entry.title = $any($event.target).value">
                     </label>
                     <label *ngIf="draft.entry.kind === 'command'">
                         Command text
                         <input class="form-control form-control-sm command-input" required autocomplete="off"
-                               spellcheck="false" [disabled]="busy" [value]="draft.entry.text"
+                               spellcheck="false" autocapitalize="off" [disabled]="busy" [value]="draft.entry.text"
                                (input)="draft.entry.text = $any($event.target).value">
                     </label>
                     <label *ngIf="draft.entry.kind === 'command'" class="enter-option">
@@ -54,23 +61,26 @@ export const template = `
                     </label>
                 </ng-container>
                 <ng-template #deletePrompt>
-                    <div>Delete “{{ draft.entry.title }}”?</div>
-                    <div *ngIf="draft.entry.kind === 'group' && draft.entry.entries.length">
+                    <p class="delete-impact" *ngIf="draft.entry.kind === 'group' && draft.entry.entries.length">
                         This also deletes its commands and subgroups.
-                    </div>
+                    </p>
                 </ng-template>
+                <p class="error text-danger" *ngIf="error" role="alert">{{ error }}</p>
                 <div class="actions">
-                    <button type="button" class="btn btn-sm btn-outline-secondary" [disabled]="busy"
-                            (click)="cancelEdit()">Cancel</button>
+                    <ng-template #cancelButton><button type="button" class="btn btn-sm btn-outline-secondary"
+                              [disabled]="busy" (click)="cancelEdit()">Cancel</button></ng-template>
+                    <button *ngIf="draft.deleting; else cancelButton" #editorFocus type="button"
+                            class="btn btn-sm btn-outline-secondary" [disabled]="busy" (click)="cancelEdit()">Cancel</button>
                     <button type="submit" class="btn btn-sm" [disabled]="busy"
                             [class.btn-danger]="draft.deleting" [class.btn-primary]="!draft.deleting">
-                        {{ draft.deleting ? 'Confirm deletion' : 'Save' }}
+                        {{ busy ? 'Saving…' : draft.deleting ? 'Confirm deletion' :
+                            draft.index === undefined ? 'Add ' + draft.entry.kind : 'Save changes' }}
                     </button>
                 </div>
             </form>
-            <p class="error text-danger" *ngIf="error" role="alert">{{ error }}</p>
+            <p class="error text-danger" *ngIf="error && !editor" role="alert">{{ error }}</p>
 
-            <div class="scope-list">
+            <div class="scope-list" [class.is-managing]="managing" [hidden]="!!editor">
                 <section class="scope" *ngFor="let scope of scopes; trackBy: trackScope">
                     <div class="row-heading"
                          [class.drop-ready]="dragged && dragged.entries !== scope.entries"
@@ -95,10 +105,10 @@ export const template = `
 
 <ng-template #entryList let-entries let-scope="scope" let-path="path">
     <div *ngIf="managing" class="actions group-actions">
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                [disabled]="editor || busy" (click)="add(scope, path, 'command')">Add command</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                [disabled]="editor || busy" (click)="add(scope, path, 'group')">Add group</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Add command"
+                [disabled]="editor || busy" (click)="add(scope, path, 'command', $event)">+ Command</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" aria-label="Add group"
+                [disabled]="editor || busy" (click)="add(scope, path, 'group', $event)">+ Group</button>
     </div>
     <p *ngIf="!entries.length && !managing" class="empty">No commands yet</p>
     <div class="entries" [class.managing]="managing">
@@ -134,7 +144,10 @@ export const template = `
                           (dragstart)="startCommandDrag($event, scope, path, entries, index)"
                           (dragend)="endCommandDrag()" title="Drag to reorder or move">
                         <span aria-hidden="true" class="grip">⠿</span>
-                        <span class="command-alias">{{ entry.title }}</span>
+                        <span class="command-label">
+                            <span class="command-alias">{{ entry.title }}</span>
+                            <small *ngIf="entry.sendEnter === false" class="insert-only">Insert only</small>
+                        </span>
                     </span>
                     <button *ngIf="!managing" type="button" class="command-run"
                             [disabled]="!target?.session?.open" (click)="execute(entry, scope)">
@@ -148,10 +161,10 @@ export const template = `
             <ng-template #editActions>
                 <button type="button" class="btn btn-sm btn-outline-secondary"
                         [disabled]="editor || busy" [attr.aria-label]="'Edit ' + entry.title"
-                        (click)="edit(scope, path, index, entry)">Edit</button>
+                        (click)="edit(scope, path, index, entry, false, $event)">Edit</button>
                 <button type="button" class="btn btn-sm btn-outline-danger"
                         [disabled]="editor || busy" [attr.aria-label]="'Delete ' + entry.title"
-                        (click)="edit(scope, path, index, entry, true)">Delete</button>
+                        (click)="edit(scope, path, index, entry, true, $event)">Delete</button>
             </ng-template>
         </div>
     </div>
@@ -229,9 +242,9 @@ export const styles = `
     border-bottom: 1px solid var(--bs-border-color, #555);
 }
 .panel-position.anchor-right .panel-header { padding: 6px 58px 6px 12px; }
-.editor { border-bottom: 1px solid var(--bs-border-color, #555); }
-.move-hint { margin: 7px 12px 0; font-size: .85em; opacity: .8; }
+.move-hint { margin: 0; padding: 8px 12px; font-size: .85em; background: #80808012; }
 .scope-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px 10px; }
+.scope-list[hidden] { display: none; }
 .scope { padding: 8px 0; }
 .scope + .scope { border-top: 1px solid var(--bs-border-color, #555); }
 .row-heading { margin-bottom: 5px; }
@@ -249,8 +262,14 @@ details[open] > summary::before { transform: rotate(90deg); }
 .group-title { flex: 1; min-width: 0; }
 .actions.group-controls { flex: none; flex-wrap: nowrap; }
 .row-heading { padding: 3px 4px; }
+.is-managing .row-heading { background: #8080801a; border-radius: 5px; padding: 5px 8px; }
+.is-managing summary { padding-block: 5px; }
+.is-managing summary:hover { background: #80808017; border-radius: 5px; }
 .drop-ready { outline: 1px dashed var(--bs-primary, #9689eb); border-radius: 4px; }
-.drop-active { background: var(--bs-primary-bg-subtle, #80808040); outline-style: solid; }
+.row-heading.drop-active, summary.drop-active {
+    background: var(--bs-primary-bg-subtle, #80808040);
+    outline-style: solid;
+}
 .nested {
     border-left: 1px solid var(--bs-border-color, #555);
     margin-left: 5px;
@@ -270,6 +289,10 @@ details[open] > summary::before { transform: rotate(90deg); }
 .command-row.drop-after::after { bottom: -3px; }
 .command-drag { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .command-drag[draggable="true"] { cursor: grab; user-select: none; }
+.managing .command-row { padding: 3px 4px 3px 6px; border-radius: 5px; }
+.managing .command-row:hover { background: #80808012; }
+.command-label { display: grid; line-height: 1.25; }
+.insert-only { color: var(--bs-secondary-color, inherit); font-size: .76em; }
 .grip { opacity: .68; }
 .command-run {
     display: block;
@@ -285,14 +308,22 @@ details[open] > summary::before { transform: rotate(90deg); }
 .command-run:disabled { opacity: .5; }
 .actions { flex-wrap: wrap; }
 .command-row > .actions { flex: none; }
-.group-actions { margin: 4px 0; }
-.editor { display: grid; gap: 7px; padding: 8px 12px; }
-.editor label { display: grid; gap: 3px; margin: 0; }
+.group-actions { margin: 5px 0 7px; gap: 5px; }
+.editor {
+    display: grid;
+    gap: 11px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px;
+}
+.editor-heading { padding-bottom: 8px; border-bottom: 1px solid var(--bs-border-color, #555); }
+.editor-heading strong { overflow-wrap: anywhere; }
+.editor-location { font-size: .85em; color: var(--bs-secondary-color, inherit); overflow-wrap: anywhere; }
+.editor label { display: grid; gap: 4px; margin: 0; }
 .editor .enter-option { display: flex; align-items: center; gap: 6px; }
 .editor .actions { justify-content: flex-end; }
 .command-input { font-family: ui-monospace, monospace; }
 .error { margin: 6px 12px; }
-@media (max-height: 420px) {
-    .editor { overflow: auto; max-height: 52vh; }
-}
+.editor .error, .delete-impact { margin: 0; }
 `

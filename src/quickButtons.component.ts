@@ -1,4 +1,4 @@
-import { Component, HostListener, Inject, OnDestroy } from '@angular/core'
+import { Component, ElementRef, HostListener, Inject, NgZone, OnDestroy, ViewChild } from '@angular/core'
 import { Subscription } from 'rxjs'
 import { AppService, ConfigService, NotificationsService, SplitTabComponent } from 'tabby-core'
 import { BaseTerminalProfile, BaseTerminalTabComponent } from 'tabby-terminal'
@@ -42,6 +42,7 @@ interface Editor {
     index?: number
     entry: Entry
     deleting: boolean
+    location: string
 }
 
 interface DraggedCommand {
@@ -96,6 +97,14 @@ export class QuickButtonsComponent implements OnDestroy {
     private ballDrag: BallDrag | null = null
     private viewport = { width: window.innerWidth, height: window.innerHeight }
     private panelContext?: Subscription
+    private editorOpener?: HTMLElement
+    @ViewChild('doneButton') private doneButton?: ElementRef<HTMLButtonElement>
+
+    @ViewChild('editorFocus') set editorFocus (field: ElementRef<HTMLElement> | undefined) {
+        if (field) {
+            queueMicrotask(() => field.nativeElement.focus())
+        }
+    }
     private readonly groupKeys = new WeakMap<Group, symbol>()
     readonly trackEntry = (_index: number, entry: Entry): Command | symbol =>
         entry.kind === 'group' ? this.groupKey(entry) : entry
@@ -104,6 +113,7 @@ export class QuickButtonsComponent implements OnDestroy {
         @Inject(AppService) private readonly app: AppService,
         @Inject(ConfigService) private readonly config: ConfigService,
         @Inject(NotificationsService) private readonly notifications: NotificationsService,
+        @Inject(NgZone) private readonly zone: NgZone,
     ) {}
 
     get activeTerminal (): Terminal | null {
@@ -227,7 +237,7 @@ export class QuickButtonsComponent implements OnDestroy {
             this.notifications.info('Open a terminal to use Quick Buttons.')
             return
         }
-        if (this.busy) {
+        if (this.busy || this.editor) {
             return
         }
         if (this.pinned || this.managing) {
@@ -267,6 +277,7 @@ export class QuickButtonsComponent implements OnDestroy {
         this.managing = false
         this.pinned = false
         this.editor = null
+        this.editorOpener = undefined
         this.error = ''
         this.endCommandDrag()
         this.ballDrag?.listeners.abort()
@@ -293,6 +304,17 @@ export class QuickButtonsComponent implements OnDestroy {
         this.cancelEdit()
     }
 
+    escape (): void {
+        if (this.busy) {
+            return
+        }
+        if (this.editor) {
+            this.cancelEdit()
+        } else {
+            this.close()
+        }
+    }
+
     execute (command: Command, scope: VisibleScope): void {
         const terminal = this.target
         const session = terminal?.session
@@ -312,25 +334,46 @@ export class QuickButtonsComponent implements OnDestroy {
         terminal.emitFocused()
     }
 
-    add (scope: VisibleScope, parentPath: number[], kind: Entry['kind']): void {
+    add (scope: VisibleScope, parentPath: number[], kind: Entry['kind'], event?: MouseEvent): void {
         const entry: Entry = kind === 'group'
             ? { kind, title: '', entries: [] }
             : { kind, title: '', text: '', sendEnter: true }
-        this.setEditor({ scope, parentPath, entry, deleting: false })
+        this.setEditor({ scope, parentPath, entry, deleting: false }, event)
     }
 
-    edit (scope: VisibleScope, parentPath: number[], index: number, entry: Entry, deleting = false): void {
-        this.setEditor({ scope, parentPath, index, entry: { ...entry }, deleting })
+    edit (scope: VisibleScope, parentPath: number[], index: number, entry: Entry, deleting = false, event?: MouseEvent): void {
+        this.setEditor({ scope, parentPath, index, entry: { ...entry }, deleting }, event)
     }
 
-    private setEditor (editor: Editor): void {
+    private setEditor (editor: Omit<Editor, 'location'>, event?: MouseEvent): void {
+        const names = [editor.scope.title]
+        let entries = editor.scope.entries
+        for (const index of editor.parentPath) {
+            const group = entries[index]
+            if (group?.kind !== 'group') {
+                break
+            }
+            names.push(group.title)
+            entries = group.entries
+        }
         this.error = ''
-        this.editor = editor
+        this.editorOpener = event?.currentTarget as HTMLElement | undefined
+        this.editor = { ...editor, location: names.join(' / ') }
     }
 
     cancelEdit (): void {
+        const opener = this.editorOpener
         this.editor = null
+        this.editorOpener = undefined
         this.error = ''
+        if (opener) {
+            requestAnimationFrame(() => {
+                if (this.managing && !this.editor) {
+                    const target = opener.isConnected ? opener : this.doneButton?.nativeElement
+                    target?.focus({ preventScroll: true })
+                }
+            })
+        }
     }
 
     startCommandDrag (event: DragEvent, scope: VisibleScope, parentPath: number[], entries: Entry[], index: number): void {
@@ -493,7 +536,7 @@ export class QuickButtonsComponent implements OnDestroy {
         for (const scope of changes.keys()) {
             if (previous.find(item => item.profileId === scope.profileId) !== scope.saved) {
                 this.refreshScopes()
-                this.editor = null
+                this.cancelEdit()
                 this.error = 'Shortcuts changed elsewhere. Try again.'
                 return
             }
@@ -509,16 +552,21 @@ export class QuickButtonsComponent implements OnDestroy {
         settings.scopes = next
         try {
             await this.config.save()
-            this.editor = null
-            this.refreshScopes()
         } catch {
-            if (this.settings === settings && (settings.scopes === next || (!next.length && !settings.scopes.length))) {
-                settings.scopes = previous
-            }
-            this.error = 'Could not save the Tabby configuration. Try again.'
-        } finally {
-            this.busy = false
+            this.zone.run(() => {
+                this.busy = false
+                if (this.settings === settings && (settings.scopes === next || (!next.length && !settings.scopes.length))) {
+                    settings.scopes = previous
+                }
+                this.error = 'Could not save the Tabby configuration. Try again.'
+            })
+            return
         }
+        this.zone.run(() => {
+            this.busy = false
+            this.cancelEdit()
+            this.refreshScopes()
+        })
     }
 
     private refreshScopes (): void {
